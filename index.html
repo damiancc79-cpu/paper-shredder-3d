@@ -1,0 +1,1490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>SHRED-9000 — Interactive Paper Shredder</title>
+<style>
+  :root{
+    --ink:#e8eef2; --muted:#8b9aa6; --line:rgba(150,180,200,.16);
+    --panel:rgba(10,14,19,.84); --amber:#ffb347; --red:#ff5a4d; --green:#5ce29a; --cyan:#63d9ff;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:#05070a;color:var(--ink);overflow:hidden;
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Inter,sans-serif;
+    -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;
+  }
+  canvas#gl{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+  canvas#gl.dragging{cursor:grabbing}
+  canvas#gl.hovering{cursor:pointer}
+  .vignette{position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(ellipse at 50% 45%,transparent 42%,rgba(0,0,0,.55) 100%)}
+  .grain{position:fixed;inset:0;pointer-events:none;opacity:.055;mix-blend-mode:overlay;
+    background-image:radial-gradient(rgba(255,255,255,.8) .6px,transparent .7px);background-size:3px 3px}
+
+  .pane{position:fixed;background:var(--panel);border:1px solid var(--line);
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  .kick{font-size:9px;letter-spacing:.22em;font-weight:800;color:var(--cyan)}
+
+  header{position:fixed;top:0;left:0;right:0;padding:20px 24px 40px;pointer-events:none;
+    background:linear-gradient(rgba(5,7,10,.85),transparent);display:flex;justify-content:space-between;gap:16px}
+  .title{font-family:"Helvetica Neue",Arial,sans-serif;font-size:27px;font-weight:800;letter-spacing:.12em;margin:2px 0 0}
+  .sub{font-size:10px;letter-spacing:.16em;color:var(--muted);margin-top:3px}
+  .chips{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+  .chip{font-size:9.5px;letter-spacing:.14em;font-weight:700;padding:6px 10px;border-radius:20px;
+    border:1px solid var(--line);background:rgba(8,12,17,.8);color:var(--muted);white-space:nowrap;
+    display:flex;align-items:center;gap:6px}
+  .dot{width:6px;height:6px;border-radius:50%;background:#556}
+  .chip.ok{color:var(--green);border-color:rgba(92,226,154,.35)} .chip.ok .dot{background:var(--green);box-shadow:0 0 8px var(--green)}
+  .chip.warn{color:var(--amber);border-color:rgba(255,179,71,.4)} .chip.warn .dot{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+  .chip.bad{color:var(--red);border-color:rgba(255,90,77,.45)} .chip.bad .dot{background:var(--red);box-shadow:0 0 8px var(--red)}
+
+  #stats{left:22px;bottom:22px;width:246px;padding:14px 15px 12px}
+  #stats h3{margin:5px 0 10px;font-size:15px;font-weight:700;letter-spacing:.06em}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:9px 10px}
+  .grid div span{display:block;font-size:8.5px;letter-spacing:.13em;color:var(--muted)}
+  .grid div b{display:block;font-size:15px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+  .meter{margin-top:11px}
+  .meter .lab{display:flex;justify-content:space-between;font-size:8.5px;letter-spacing:.13em;color:var(--muted);margin-bottom:4px}
+  .bar{height:6px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden}
+  .bar i{display:block;height:100%;width:0%;border-radius:4px;transition:width .18s linear}
+  #binBar i{background:linear-gradient(90deg,#4fc3f7,#63d9ff)}
+  #tempBar i{background:linear-gradient(90deg,#5ce29a,#ffb347)}
+  #loadBar i{background:linear-gradient(90deg,#8b9aa6,#e8eef2)}
+
+  #ctrl{right:22px;top:96px;width:212px;padding:13px;max-height:calc(100vh - 140px);overflow:auto}
+  #ctrl::-webkit-scrollbar{width:5px}#ctrl::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:3px}
+  .sect{margin-bottom:13px}
+  .sect:last-child{margin-bottom:0}
+  .sect>.kick{display:block;margin-bottom:7px}
+  .row{display:grid;gap:5px}
+  .row.two{grid-template-columns:1fr 1fr}
+  .row.three{grid-template-columns:1fr 1fr 1fr}
+  button.b{appearance:none;border:1px solid var(--line);background:rgba(16,22,29,.9);color:#c8d6de;
+    font:inherit;font-size:9.5px;letter-spacing:.1em;font-weight:700;padding:8px 7px;text-align:left;
+    cursor:pointer;transition:.15s;border-radius:3px}
+  button.b:hover{border-color:var(--cyan);color:var(--cyan);background:rgba(20,42,54,.9)}
+  button.b.on{border-color:var(--cyan);color:#061119;background:var(--cyan)}
+  button.b.warn.on{border-color:var(--amber);background:var(--amber);color:#1a1000}
+  button.b.danger:hover{border-color:var(--red);color:var(--red);background:rgba(48,16,14,.9)}
+  button.b:disabled{opacity:.35;cursor:not-allowed;border-color:var(--line);color:#5c6a74;background:rgba(16,22,29,.6)}
+  button.b .m{display:block;font-size:8px;letter-spacing:.08em;color:var(--muted);font-weight:600;margin-top:2px}
+  button.b.on .m{color:rgba(6,17,25,.66)}
+  .slider{display:flex;align-items:center;gap:8px;margin-top:3px}
+  input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:3px;background:rgba(255,255,255,.14);border-radius:3px;outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;
+    background:var(--cyan);cursor:pointer;box-shadow:0 0 8px rgba(99,217,255,.6)}
+  input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--cyan);cursor:pointer}
+  .val{font-size:9px;color:var(--cyan);font-variant-numeric:tabular-nums;width:34px;text-align:right;font-weight:700}
+
+  #alert{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.94);opacity:0;pointer-events:none;
+    padding:16px 26px;border:1px solid rgba(255,90,77,.5);background:rgba(38,8,6,.9);border-radius:5px;
+    text-align:center;transition:.22s cubic-bezier(.2,.9,.3,1.3);backdrop-filter:blur(10px);max-width:82vw}
+  #alert.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+  #alert .t{font-size:20px;font-weight:800;letter-spacing:.16em;color:var(--red)}
+  #alert .d{font-size:10.5px;letter-spacing:.09em;color:#ffc9c3;margin-top:6px;line-height:1.6}
+  #alert.info{border-color:rgba(99,217,255,.5);background:rgba(5,26,36,.9)}
+  #alert.info .t{color:var(--cyan)} #alert.info .d{color:#bfe9f8}
+  #hint{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);font-size:9.5px;letter-spacing:.13em;
+    color:#93a6b2;text-align:center;pointer-events:none;text-shadow:0 2px 10px #000;white-space:nowrap}
+  #hint b{color:var(--cyan);font-weight:700}
+  #toast{position:fixed;left:50%;bottom:58px;transform:translateX(-50%) translateY(8px);opacity:0;
+    font-size:10px;letter-spacing:.12em;font-weight:700;color:#061119;background:var(--cyan);
+    padding:7px 14px;border-radius:20px;pointer-events:none;transition:.25s}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  #boot{position:fixed;inset:0;background:#05070a;display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:14px;z-index:50;transition:opacity .5s}
+  #boot.gone{opacity:0;pointer-events:none}
+  #boot .bt{font-size:12px;letter-spacing:.3em;color:var(--cyan);font-weight:800}
+  #boot .bl{width:180px;height:2px;background:rgba(255,255,255,.1);overflow:hidden}
+  #boot .bl i{display:block;height:100%;width:30%;background:var(--cyan);animation:sweep 1.1s infinite ease-in-out}
+  @keyframes sweep{0%{transform:translateX(-100%)}100%{transform:translateX(400%)}}
+
+  @media (max-width:860px){
+    header{padding:12px 12px 26px}.title{font-size:19px}.sub{display:none}
+    .kick{font-size:8px;letter-spacing:.16em}
+    #stats{left:8px;bottom:8px;width:calc(50vw - 12px);padding:9px}
+    #stats h3{display:none}.grid{gap:6px 8px}.grid div b{font-size:12px}
+    .grid div span{font-size:7.5px;letter-spacing:.08em}
+    .meter{margin-top:7px}.meter .lab{font-size:7.5px;letter-spacing:.08em;margin-bottom:3px}
+    #ctrl{right:8px;top:auto;bottom:8px;width:calc(50vw - 12px);max-height:52vh;padding:9px}
+    .sect{margin-bottom:9px}button.b{font-size:8.5px;padding:6px 5px;letter-spacing:.06em}
+    button.b .m{font-size:7px}
+    #hint{display:none}.chips{max-width:52vw;gap:4px}.chip{font-size:8px;padding:5px 7px}
+    #alert{padding:12px 16px;max-width:76vw;top:32%}
+    #alert .t{font-size:14px;letter-spacing:.1em}#alert .d{font-size:9.5px;letter-spacing:.05em}
+  }
+  @media (max-width:860px) and (max-height:720px){
+    #stats .meter:last-child{display:none}          /* drop cutter load — height is tight */
+  }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div class="vignette"></div><div class="grain"></div>
+
+<header>
+  <div>
+    <div class="kick">HIGH-SECURITY DESTRUCTION UNIT · DIN 66399</div>
+    <div class="title">SHRED&#8203;-9000</div>
+    <div class="sub">INTERACTIVE 3D SIMULATION · DRAG DOCUMENTS INTO THE FEED SLOT</div>
+  </div>
+  <div class="chips">
+    <div class="chip" id="cPower"><i class="dot"></i><span>OFF</span></div>
+    <div class="chip" id="cSec"><i class="dot"></i><span>P-4 CROSS</span></div>
+    <div class="chip" id="cTemp"><i class="dot"></i><span>MOTOR 22°C</span></div>
+    <div class="chip" id="cBin"><i class="dot"></i><span>BIN 0%</span></div>
+  </div>
+</header>
+
+<div class="pane" id="stats">
+  <div class="kick">TELEMETRY</div>
+  <h3>Machine status</h3>
+  <div class="grid">
+    <div><span>SHEETS DESTROYED</span><b id="sSheets">0</b></div>
+    <div><span>PARTICLES IN BIN</span><b id="sParts">0</b></div>
+    <div><span>CUTTER SPEED</span><b id="sRpm">0 RPM</b></div>
+    <div><span>PARTICLE SIZE</span><b id="sSize">4×42mm</b></div>
+  </div>
+  <div class="meter"><div class="lab"><span>BIN CAPACITY</span><span id="binPct">0%</span></div>
+    <div class="bar" id="binBar"><i></i></div></div>
+  <div class="meter"><div class="lab"><span>MOTOR TEMPERATURE</span><span id="tempPct">22°C</span></div>
+    <div class="bar" id="tempBar"><i></i></div></div>
+  <div class="meter"><div class="lab"><span>CUTTER LOAD</span><span id="loadPct">0%</span></div>
+    <div class="bar" id="loadBar"><i></i></div></div>
+</div>
+
+<div class="pane" id="ctrl">
+  <div class="sect">
+    <span class="kick">POWER</span>
+    <div class="row three">
+      <button class="b" data-pw="auto">AUTO</button>
+      <button class="b on" data-pw="off">OFF</button>
+      <button class="b warn" data-pw="rev">REV</button>
+    </div>
+  </div>
+  <div class="sect">
+    <span class="kick">CUT SECURITY</span>
+    <div class="row">
+      <button class="b" data-mode="strip">P-2 STRIP<span class="m">6mm ribbons</span></button>
+      <button class="b on" data-mode="cross">P-4 CROSS<span class="m">4 × 42mm chips</span></button>
+      <button class="b" data-mode="micro">P-5 MICRO<span class="m">2 × 15mm confetti</span></button>
+    </div>
+  </div>
+  <div class="sect">
+    <span class="kick">FEED MATERIAL</span>
+    <div class="row">
+      <button class="b" data-feed="paper">A4 DOCUMENT<span class="m">safe · 1 sheet</span></button>
+      <button class="b" data-feed="bundle">STAPLED BUNDLE<span class="m">5 sheets · jam risk</span></button>
+      <button class="b" data-feed="card">CREDIT CARD<span class="m">hardened cut</span></button>
+      <button class="b" data-feed="cd">CD / DVD<span class="m">high jam risk</span></button>
+      <button class="b" data-feed="board">CARDBOARD<span class="m">heavy load</span></button>
+    </div>
+  </div>
+  <div class="sect">
+    <span class="kick">MOTOR SPEED</span>
+    <div class="slider"><input type="range" id="speed" min="35" max="145" value="100"><span class="val" id="speedV">100%</span></div>
+  </div>
+  <div class="sect">
+    <span class="kick">VIEW</span>
+    <div class="row two">
+      <button class="b" id="bXray">X-RAY</button>
+      <button class="b" id="bCam">CAMERA</button>
+      <button class="b" id="bSound">SOUND</button>
+      <button class="b" id="bQual">QUALITY</button>
+    </div>
+  </div>
+  <div class="sect">
+    <span class="kick">SERVICE</span>
+    <div class="row two">
+      <button class="b danger" id="bEmpty">EMPTY BIN</button>
+      <button class="b danger" id="bReset">RESET</button>
+    </div>
+  </div>
+</div>
+
+<div id="alert"><div class="t"></div><div class="d"></div></div>
+<div id="toast"></div>
+<div id="hint">DRAG A DOCUMENT INTO THE SLOT &nbsp;·&nbsp; <b>SPACE</b> FEED &nbsp;·&nbsp; <b>1/2/3</b> CUT MODE &nbsp;·&nbsp; <b>P</b> POWER &nbsp;·&nbsp; <b>R</b> REVERSE &nbsp;·&nbsp; <b>X</b> X-RAY &nbsp;·&nbsp; DRAG TO ORBIT</div>
+
+<div id="boot"><div class="bt">SPINNING UP CUTTERS</div><div class="bl"><i></i></div></div>
+
+<script type="importmap">
+{ "imports": { "three": "./three.module.min.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   0 · DIMENSIONS   (world units = metres, Y up, machine centred on origin)
+   ═══════════════════════════════════════════════════════════════════════════ */
+const RISE   = 0.012;                                   // rubber feet
+const BIN    = { w:0.360, d:0.300, h:0.420, wall:0.008, y0:RISE };
+const BIN_IN = { w:BIN.w-BIN.wall*2-0.004, d:BIN.d-BIN.wall*2-0.004,
+                 floor:RISE+BIN.wall+0.003, top:RISE+BIN.h-0.014 };
+const HEAD   = { w:0.384, d:0.324, h:0.112, y0:RISE+BIN.h };
+const SLOT   = { y:HEAD.y0+HEAD.h, w:0.246, t:0.011 };
+const BLADE_Y     = HEAD.y0 + 0.050;
+const BIN_INNER_H = BIN_IN.top - BIN_IN.floor;
+
+const MODES = {
+  strip:{ key:'strip', label:'P-2 STRIP', stripW:0.0060, chipLen:0.150, frac:1.00, size:'6mm ribbons', fillK:1.00, rpmK:1.00 },
+  cross:{ key:'cross', label:'P-4 CROSS', stripW:0.0040, chipLen:0.042, frac:0.62, size:'4×42mm',      fillK:1.18, rpmK:1.12 },
+  micro:{ key:'micro', label:'P-5 MICRO', stripW:0.0026, chipLen:0.015, frac:0.26, size:'2×15mm',      fillK:1.45, rpmK:1.26 }
+};
+
+const ITEMS = {
+  paper : { name:'A4 DOCUMENT',    w:0.210, h:0.297, t:0.00013, jam:0.015, fill:1.00, load:1.00, hard:0, kind:'paper' },
+  bundle: { name:'STAPLED BUNDLE', w:0.210, h:0.297, t:0.00075, jam:0.210, fill:4.30, load:2.60, hard:1, kind:'paper' },
+  card  : { name:'CREDIT CARD',    w:0.0856,h:0.0540,t:0.00082, jam:0.110, fill:0.55, load:2.10, hard:2, kind:'card'  },
+  cd    : { name:'CD / DVD',       w:0.120, h:0.120, t:0.0013,  jam:0.400, fill:1.30, load:2.90, hard:2, kind:'disc'  },
+  board : { name:'CARDBOARD',      w:0.190, h:0.240, t:0.0032,  jam:0.290, fill:3.60, load:3.10, hard:1, kind:'board' }
+};
+
+const BIN_SHEETS = 22;             // A4 sheets before the waste bin is full
+const MAX_DEBRIS = 2400;
+const MAX_RIBBON = 80;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1 · UTILITIES
+   ═══════════════════════════════════════════════════════════════════════════ */
+const clamp = (v,a,b)=>v<a?a:v>b?b:v;
+const lerp  = (a,b,t)=>a+(b-a)*t;
+const rand  = (a,b)=>a+Math.random()*(b-a);
+const damp  = (a,b,l,dt)=>lerp(a,b,1-Math.exp(-l*dt));
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const $  = s=>document.querySelector(s);
+const $$ = s=>Array.from(document.querySelectorAll(s));
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   2 · RENDERER · SCENE · LIGHTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+const canvas   = $('#gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, powerPreference:'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace    = THREE.SRGBColorSpace;
+renderer.toneMapping         = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.06;
+renderer.shadowMap.enabled   = true;
+renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
+renderer.localClippingEnabled= true;
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(38, 1, 0.02, 40);
+
+(function sky(){
+  const c=document.createElement('canvas'); c.width=8; c.height=256; const x=c.getContext('2d');
+  const g=x.createLinearGradient(0,0,0,256);
+  g.addColorStop(0,'#141b24'); g.addColorStop(.46,'#0b1016'); g.addColorStop(.62,'#080c11'); g.addColorStop(1,'#04060a');
+  x.fillStyle=g; x.fillRect(0,0,8,256);
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace;
+  const dome=new THREE.Mesh(new THREE.SphereGeometry(14,24,16),
+    new THREE.MeshBasicMaterial({map:t,side:THREE.BackSide,depthWrite:false}));
+  dome.renderOrder=-1; scene.add(dome);
+})();
+
+(function env(){   // procedural studio softboxes → PMREM environment
+  const c=document.createElement('canvas'); c.width=512; c.height=256; const x=c.getContext('2d');
+  const g=x.createLinearGradient(0,0,0,256);
+  g.addColorStop(0,'#3d4a58'); g.addColorStop(.44,'#20272f'); g.addColorStop(.52,'#131920'); g.addColorStop(1,'#070a0e');
+  x.fillStyle=g; x.fillRect(0,0,512,256);
+  const soft=(cx,cy,rx,ry,col,a)=>{ x.save(); x.globalAlpha=a;
+    const rg=x.createRadialGradient(cx,cy,0,cx,cy,rx); rg.addColorStop(0,col); rg.addColorStop(1,'rgba(0,0,0,0)');
+    x.fillStyle=rg; x.translate(cx,cy); x.scale(1,ry/rx); x.translate(-cx,-cy);
+    x.beginPath(); x.arc(cx,cy,rx,0,7); x.fill(); x.restore(); };
+  soft(140,58,120,60,'#ffffff',.95);
+  soft(370,74,96,52,'#cfe6ff',.55);
+  soft(268,132,150,44,'#ffd9a8',.20);
+  soft(30,150,90,50,'#9fc4e8',.16);
+  const t=new THREE.CanvasTexture(c);
+  t.mapping=THREE.EquirectangularReflectionMapping; t.colorSpace=THREE.SRGBColorSpace;
+  const p=new THREE.PMREMGenerator(renderer);
+  scene.environment=p.fromEquirectangular(t).texture;
+  t.dispose(); p.dispose();
+})();
+
+scene.add(new THREE.HemisphereLight(0x9fb8cf, 0x1a1613, 0.55));
+const key = new THREE.DirectionalLight(0xfff1dd, 2.35);
+key.position.set(0.85,1.55,0.80); key.castShadow=true;
+key.shadow.mapSize.set(2048,2048);
+key.shadow.camera.near=0.4;  key.shadow.camera.far=4.2;
+key.shadow.camera.left=-0.8; key.shadow.camera.right=0.8;
+key.shadow.camera.top=0.95;  key.shadow.camera.bottom=-0.4;
+key.shadow.bias=-0.0006; key.shadow.normalBias=0.012; key.shadow.radius=2.2;
+key.target.position.set(0,0.24,0);
+scene.add(key, key.target);
+const fillL=new THREE.DirectionalLight(0x8fbcff,0.55); fillL.position.set(-1.3,0.75,-0.85); scene.add(fillL);
+const rimL =new THREE.DirectionalLight(0xffc98a,0.85); rimL.position.set(-0.5,0.5,-1.4);   scene.add(rimL);
+/* The tub has a lid on it, so nothing would light the shredded pile. This stands in
+   for light diffusing through the translucent walls. */
+const binLamp =new THREE.PointLight(0xdfeaf5, 1.5, 0.95, 2); binLamp.position.set(0,0.30,0.06);
+const binLamp2=new THREE.PointLight(0xbcd2e8, 0.7, 0.70, 2); binLamp2.position.set(0,0.10,0.13);
+
+(function desk(){
+  const c=document.createElement('canvas'); c.width=c.height=512; const x=c.getContext('2d');
+  const rg=x.createRadialGradient(256,256,20,256,256,256);
+  rg.addColorStop(0,'#4a5058'); rg.addColorStop(.42,'#333940'); rg.addColorStop(1,'#0d1116');
+  x.fillStyle=rg; x.fillRect(0,0,512,512);
+  const r=mulberry32(7);
+  for(let i=0;i<24000;i++){ x.fillStyle=`rgba(255,255,255,${r()*.05})`; x.fillRect(r()*512,r()*512,1,1); }
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace;
+  const floor=new THREE.Mesh(new THREE.CircleGeometry(3.2,64),
+    new THREE.MeshStandardMaterial({map:t,roughness:.82,metalness:.06}));
+  floor.rotation.x=-Math.PI/2; floor.receiveShadow=true; scene.add(floor);
+})();
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   3 · PROCEDURAL TEXTURES
+   ═══════════════════════════════════════════════════════════════════════════ */
+const texCache={};
+
+function docTexture(seed){
+  const r=mulberry32(seed|0), W=440, H=622;
+  const c=document.createElement('canvas'); c.width=W; c.height=H; const x=c.getContext('2d');
+  x.fillStyle='#f6f3ec'; x.fillRect(0,0,W,H);
+  for(let i=0;i<8000;i++){ x.fillStyle=`rgba(0,0,0,${r()*.026})`; x.fillRect(r()*W,r()*H,1,1); }
+  const accent=['#1e3f6e','#6e1e2c','#1e5a44','#4a2a6b'][(r()*4)|0];
+  x.fillStyle=accent; x.fillRect(0,0,W,9);
+  x.beginPath(); x.arc(48,52,17,0,7); x.fill();
+  x.fillStyle='#fff'; x.font='bold 16px Helvetica'; x.textAlign='center'; x.fillText('§',48,58); x.textAlign='left';
+  x.fillStyle='#1b1f26'; x.font='bold 15px Helvetica';
+  x.fillText(['QUARTERLY MEMO','PERSONNEL FILE','TAX SCHEDULE B','MERGER DRAFT','LEGAL NOTICE','WAGE REPORT'][(r()*6)|0],78,48);
+  x.fillStyle='#96a0ab'; x.font='9px Helvetica';
+  x.fillText('REF '+(100000+((r()*899999)|0))+'  ·  INTERNAL DISTRIBUTION ONLY',78,63);
+  x.fillStyle='#c9ced6'; x.fillRect(30,84,W-60,1);
+  let y=112;
+  for(let p=0;p<6 && y<H-96;p++){
+    if(r()<.34){ x.fillStyle='#2b3138'; x.font='bold 11px Helvetica';
+      x.fillText(['SECTION '+(p+1),'FINDINGS','APPENDIX','SUMMARY'][(r()*4)|0],30,y); y+=17; }
+    const lines=3+((r()*6)|0);
+    for(let i=0;i<lines && y<H-96;i++){
+      x.fillStyle=`rgba(58,66,76,${.42+r()*.34})`;
+      x.fillRect(30,y,(W-64)*(.5+r()*.5),2.4+r()*1.1); y+=8.4;
+    }
+    y+=10;
+    if(r()<.24 && y<H-170){
+      for(let rr=0;rr<4;rr++) for(let cc=0;cc<4;cc++){
+        x.fillStyle=`rgba(58,66,76,${rr===0?.62:.34})`; x.fillRect(34+cc*94, y+rr*14, 52+r()*28, 3); }
+      x.strokeStyle='rgba(120,130,142,.5)'; x.lineWidth=1; x.strokeRect(30,y-7,W-60,64); y+=76;
+    }
+  }
+  x.strokeStyle='#2c4f8a'; x.lineWidth=1.7; x.beginPath();
+  let sx=42; const sy=H-52; x.moveTo(sx,sy);
+  for(let i=0;i<26;i++){ sx+=4.6; x.quadraticCurveTo(sx-2.4, sy-14*Math.sin(i*.9)*r(), sx, sy-6*Math.sin(i*.55)); }
+  x.stroke();
+  x.fillStyle='#aab2bb'; x.fillRect(38,H-36,150,1);
+  x.fillStyle='#8f98a2'; x.font='8px Helvetica'; x.fillText('AUTHORISED SIGNATORY',38,H-25);
+  x.save(); x.translate(W-118,H-152); x.rotate(-0.34);
+  x.strokeStyle='rgba(196,42,38,.72)'; x.lineWidth=3.2; x.strokeRect(-72,-25,144,50);
+  x.fillStyle='rgba(196,42,38,.78)'; x.font='bold 22px Helvetica'; x.textAlign='center';
+  x.fillText(['CONFIDENTIAL','TOP SECRET','CLASSIFIED','DO NOT COPY'][(r()*4)|0],0,8);
+  x.restore();
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; t.anisotropy=6; return t;
+}
+
+function cardTexture(){
+  if(texCache.card) return texCache.card;
+  const W=428,H=270,c=document.createElement('canvas'); c.width=W;c.height=H; const x=c.getContext('2d');
+  const g=x.createLinearGradient(0,0,W,H);
+  g.addColorStop(0,'#12305c'); g.addColorStop(.5,'#1d5b93'); g.addColorStop(1,'#0d2140');
+  x.fillStyle=g; x.fillRect(0,0,W,H);
+  x.globalAlpha=.16;
+  for(let i=-H;i<W;i+=26){ x.strokeStyle='#8fd0ff'; x.lineWidth=8; x.beginPath(); x.moveTo(i,H); x.lineTo(i+H,0); x.stroke(); }
+  x.globalAlpha=1;
+  x.fillStyle='#e0c070'; x.fillRect(38,80,58,44);
+  x.strokeStyle='rgba(90,70,20,.6)'; x.lineWidth=1.4;
+  for(let i=1;i<4;i++){ x.beginPath(); x.moveTo(38,80+i*11); x.lineTo(96,80+i*11); x.stroke(); }
+  x.beginPath(); x.moveTo(67,80); x.lineTo(67,124); x.stroke();
+  x.fillStyle='rgba(255,255,255,.94)'; x.font='bold 25px "Courier New",monospace';
+  x.fillText('4291  8830  1174  9002',34,178);
+  x.font='10px Helvetica'; x.fillStyle='rgba(255,255,255,.6)'; x.fillText('VALID THRU  09/29',34,204);
+  x.font='bold 15px Helvetica'; x.fillStyle='rgba(255,255,255,.9)'; x.fillText('J. ANDERSON',34,232);
+  x.globalAlpha=.85;
+  x.fillStyle='#e8eef2'; x.beginPath(); x.arc(348,214,26,0,7); x.fill();
+  x.fillStyle='#ffb347'; x.beginPath(); x.arc(374,214,26,0,7); x.fill();
+  x.globalAlpha=1;
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; t.anisotropy=6;
+  return texCache.card=t;
+}
+
+function boardTexture(){
+  if(texCache.board) return texCache.board;
+  const W=384,H=384,c=document.createElement('canvas'); c.width=W;c.height=H; const x=c.getContext('2d');
+  x.fillStyle='#b3844f'; x.fillRect(0,0,W,H);
+  const r=mulberry32(31);
+  for(let i=0;i<18000;i++){ x.fillStyle=`rgba(${60+r()*70|0},${36+r()*46|0},10,${r()*.2})`; x.fillRect(r()*W,r()*H,2,1); }
+  for(let i=0;i<W;i+=7){ x.fillStyle=`rgba(255,255,255,${.05+.04*Math.sin(i)})`; x.fillRect(i,0,3,H); }
+  x.strokeStyle='rgba(50,30,10,.5)'; x.lineWidth=6; x.strokeRect(3,3,W-6,H-6);
+  x.fillStyle='rgba(40,26,12,.55)'; x.font='bold 30px Helvetica'; x.textAlign='center';
+  x.fillText('FRAGILE',W/2,H/2); x.font='bold 15px Helvetica'; x.fillText('THIS WAY UP',W/2,H/2+28);
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return texCache.board=t;
+}
+
+function labelTexture(){
+  if(texCache.label) return texCache.label;
+  const W=512,H=128,c=document.createElement('canvas'); c.width=W;c.height=H; const x=c.getContext('2d');
+  x.fillStyle='#16191d'; x.fillRect(0,0,W,H);
+  x.fillStyle='#ffb347'; x.beginPath(); x.moveTo(54,20); x.lineTo(82,72); x.lineTo(26,72); x.closePath(); x.fill();
+  x.fillStyle='#16191d'; x.font='bold 30px Helvetica'; x.textAlign='center'; x.fillText('!',54,68);
+  x.fillStyle='#e6ecf1'; x.font='bold 19px Helvetica'; x.textAlign='left';
+  x.fillText('KEEP HANDS, HAIR & TIES CLEAR',100,48);
+  x.fillStyle='#7d8a95'; x.font='12px Helvetica';
+  x.fillText('CUTTERS ENGAGE AUTOMATICALLY · 220–240V 50Hz',100,72);
+  x.fillStyle='#3a4149'; x.fillRect(0,H-16,W,16);
+  for(let i=0;i<W;i+=22){ x.fillStyle='#ffb347';
+    x.beginPath(); x.moveTo(i,H); x.lineTo(i+11,H); x.lineTo(i+22,H-16); x.lineTo(i+11,H-16); x.closePath(); x.fill(); }
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return texCache.label=t;
+}
+
+function ventTexture(){
+  if(texCache.vent) return texCache.vent;
+  const W=128,H=128,c=document.createElement('canvas'); c.width=W;c.height=H; const x=c.getContext('2d');
+  x.fillStyle='#ffffff'; x.fillRect(0,0,W,H);
+  x.fillStyle='#000000';
+  for(let y=14;y<H-12;y+=13) x.fillRect(12,y,W-24,6);
+  return texCache.vent=new THREE.CanvasTexture(c);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4 · MATERIALS
+   ═══════════════════════════════════════════════════════════════════════════ */
+const MAT = {
+  shell : new THREE.MeshPhysicalMaterial({ color:0x3d454f, roughness:.40, metalness:.20, clearcoat:.60, clearcoatRoughness:.30, envMapIntensity:1.15, side:THREE.DoubleSide }),
+  trim  : new THREE.MeshStandardMaterial({ color:0x8d97a1, roughness:.28, metalness:.92, envMapIntensity:1.3 }),
+  dark  : new THREE.MeshStandardMaterial({ color:0x07090c, roughness:.85, metalness:.1, side:THREE.DoubleSide }),
+  steel : new THREE.MeshStandardMaterial({ color:0xb9c2ca, roughness:.24, metalness:1.0, envMapIntensity:1.5 }),
+  steelD: new THREE.MeshStandardMaterial({ color:0x6f7880, roughness:.38, metalness:1.0, envMapIntensity:1.2 }),
+  rubber: new THREE.MeshStandardMaterial({ color:0x101317, roughness:.95, metalness:0 }),
+  panel : new THREE.MeshStandardMaterial({ color:0x0d1116, roughness:.5, metalness:.4 }),
+  /* Smoked polycarbonate. Deliberately NOT MeshPhysicalMaterial.transmission: the
+     transmission pass renders this tub solid black here, and alpha blending both
+     looks right and costs one less full-scene pass. */
+  bin   : new THREE.MeshPhysicalMaterial({ color:0x4d5c69, roughness:.14, metalness:0, transparent:true,
+            opacity:.40, depthWrite:false, side:THREE.DoubleSide, envMapIntensity:1.5,
+            clearcoat:.85, clearcoatRoughness:.06, ior:1.5 })
+};
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   5 · MACHINE
+   ═══════════════════════════════════════════════════════════════════════════ */
+const machine  = new THREE.Group(); scene.add(machine);
+const binGroup = new THREE.Group(); machine.add(binGroup);
+const headGroup= new THREE.Group(); machine.add(headGroup);
+headGroup.position.y = HEAD.y0;
+
+const headShell=[], leds={};
+let switchKnob=null, cutterA=null, cutterB=null, sensorLight=null;
+
+(function buildBin(){
+  const { w,d,h,wall,y0 } = BIN;
+  const tub=(gw,gh,gd,px,py,pz)=>{
+    const m=new THREE.Mesh(new THREE.BoxGeometry(gw,gh,gd), MAT.bin);
+    m.position.set(px,py,pz); m.castShadow=true; m.receiveShadow=true;
+    binGroup.add(m);
+  };
+  const midY = y0 + wall + (h-wall)/2;
+  tub(w, wall, d, 0, y0+wall/2, 0);
+  tub(wall, h-wall, d, -(w/2-wall/2), midY, 0);
+  tub(wall, h-wall, d,  (w/2-wall/2), midY, 0);
+  tub(w-wall*2, h-wall, wall, 0, midY, -(d/2-wall/2));
+  tub(w-wall*2, h-wall, wall, 0, midY,  (d/2-wall/2));
+
+  const rim=new THREE.Mesh(new THREE.BoxGeometry(w+.004,.010,d+.004), MAT.trim);
+  rim.position.y=y0+h-.005; rim.castShadow=true; binGroup.add(rim);
+  const rimIn=new THREE.Mesh(new THREE.BoxGeometry(w-.026,.012,d-.026), MAT.dark);
+  rimIn.position.y=y0+h-.006; binGroup.add(rimIn);
+
+  // drawer handle (clickable)
+  const hg=new THREE.Group(); hg.position.set(0, y0+h*0.58, d/2+0.002); binGroup.add(hg);
+  const hp=new THREE.Mesh(new THREE.BoxGeometry(.118,.038,.012),
+    new THREE.MeshPhysicalMaterial({color:0x14171c,roughness:.5,metalness:.25,clearcoat:.4}));
+  hp.castShadow=true; hg.add(hp);
+  const hRec=new THREE.Mesh(new THREE.BoxGeometry(.100,.022,.016), MAT.dark); hRec.position.z=.004; hg.add(hRec);
+  const hBar=new THREE.Mesh(new THREE.BoxGeometry(.090,.008,.020), MAT.trim); hBar.position.set(0,.007,.008); hg.add(hBar);
+  hg.userData.pick={ action:'empty' };
+
+  for(const sx of [-1,1]) for(const sz of [-1,1]){
+    const f=new THREE.Mesh(new THREE.CylinderGeometry(.014,.017,RISE,14), MAT.rubber);
+    f.position.set(sx*(w/2-.030), RISE/2, sz*(d/2-.030)); f.castShadow=true; binGroup.add(f);
+  }
+  binGroup.add(binLamp, binLamp2);
+})();
+
+(function buildHead(){
+  const { w,d,h } = HEAD;
+  const T=0.010, topT=0.012, slotH=SLOT.t/2;
+  const add=(geo,mat,px,py,pz,track=true)=>{
+    const m=new THREE.Mesh(geo,mat); m.position.set(px,py,pz);
+    m.castShadow=true; m.receiveShadow=true; headGroup.add(m);
+    if(track) headShell.push(m); return m;
+  };
+  // ---- open shell: 4 walls, top plate around the slot, bottom rails around the chute ----
+  add(new THREE.BoxGeometry(T,h,d), MAT.shell, -(w/2-T/2), h/2, 0);
+  add(new THREE.BoxGeometry(T,h,d), MAT.shell,  (w/2-T/2), h/2, 0);
+  add(new THREE.BoxGeometry(w-T*2,h,T), MAT.shell, 0, h/2,  (d/2-T/2));
+  add(new THREE.BoxGeometry(w-T*2,h,T), MAT.shell, 0, h/2, -(d/2-T/2));
+
+  const fD=d/2-slotH;
+  add(new THREE.BoxGeometry(w,topT,fD), MAT.shell, 0, h-topT/2,  slotH+fD/2);
+  add(new THREE.BoxGeometry(w,topT,fD), MAT.shell, 0, h-topT/2, -(slotH+fD/2));
+  const capW=(w-SLOT.w)/2;
+  for(const s of [-1,1]) add(new THREE.BoxGeometry(capW,topT,SLOT.t), MAT.shell, s*(SLOT.w/2+capW/2), h-topT/2, 0);
+
+  // bottom: rails around a chute opening
+  const chuteW=SLOT.w+0.014, chuteD=0.070, bD=(d-2*T-chuteD)/2, bW=(w-2*T-chuteW)/2;
+  add(new THREE.BoxGeometry(w-2*T,T,bD), MAT.shell, 0, T/2,  chuteD/2+bD/2);
+  add(new THREE.BoxGeometry(w-2*T,T,bD), MAT.shell, 0, T/2, -(chuteD/2+bD/2));
+  for(const s of [-1,1]) add(new THREE.BoxGeometry(bW,T,chuteD), MAT.shell, s*(chuteW/2+bW/2), T/2, 0);
+
+  // glossy inlay + slot lip
+  add(new THREE.BoxGeometry(w-.03,.002,d-.03),
+      new THREE.MeshPhysicalMaterial({color:0x2a3038,roughness:.16,metalness:.3,clearcoat:1,clearcoatRoughness:.06}),
+      0, h-topT+.001, 0);
+  add(new THREE.BoxGeometry(SLOT.w+.020,.0035,SLOT.t+.020), MAT.trim.clone(), 0, h-.0008, 0);
+
+  // slot side cheeks (dark recess walls, leaves the opening clear)
+  for(const s of [-1,1])
+    add(new THREE.BoxGeometry(SLOT.w,.020,.002), MAT.dark, 0, h-topT-.008, s*(SLOT.t/2), false);
+
+  // internal feed guides funnelling toward the cutters
+  for(const s of [-1,1]){
+    const g=new THREE.Mesh(new THREE.BoxGeometry(SLOT.w,.0012,.030), MAT.steelD);
+    g.position.set(0, h-0.032, s*0.026); g.rotation.x = s*0.60; headGroup.add(g);
+  }
+
+  // side vents
+  const vt=ventTexture();
+  for(const s of [-1,1]){
+    const v=new THREE.Mesh(new THREE.PlaneGeometry(.14,.052),
+      new THREE.MeshStandardMaterial({color:0x0a0d11,roughness:.9,alphaMap:vt,transparent:true}));
+    v.position.set(s*(w/2+.0014), h*.5, 0); v.rotation.y=s*Math.PI/2; headGroup.add(v);
+  }
+
+  // warning label
+  add(new THREE.PlaneGeometry(.20,.05),
+      new THREE.MeshStandardMaterial({map:labelTexture(),roughness:.62}), -0.078, h*0.40, d/2+.0016);
+
+  /* ---- control panel ---- */
+  const panel=new THREE.Group(); panel.position.set(w/2-.076, h-topT+.0015, d/2-.060); headGroup.add(panel);
+  const pb=new THREE.Mesh(new THREE.BoxGeometry(.118,.004,.080), MAT.panel);
+  pb.position.y=.002; panel.add(pb); headShell.push(pb);
+
+  const cradle=new THREE.Mesh(new THREE.BoxGeometry(.088,.006,.032), MAT.dark);
+  cradle.position.set(0,.004,-.020); panel.add(cradle);
+  switchKnob=new THREE.Mesh(new THREE.BoxGeometry(.026,.009,.024),
+    new THREE.MeshPhysicalMaterial({color:0xc9d2da,roughness:.3,metalness:.35,clearcoat:.8}));
+  switchKnob.position.set(0,.010,-.020); switchKnob.castShadow=true;
+  switchKnob.userData.pick={action:'power'}; panel.add(switchKnob);
+
+  for(const [k,col,px] of [['ready',0x5ce29a,-.036],['busy',0x63d9ff,0],['fault',0xff5a4d,.036]]){
+    const led=new THREE.Mesh(new THREE.SphereGeometry(.0056,14,10),
+      new THREE.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0,roughness:.25}));
+    led.position.set(px,.0055,.021); panel.add(led);
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(.0074,.0016,8,18), MAT.steelD);
+    ring.position.set(px,.0045,.021); ring.rotation.x=Math.PI/2; panel.add(ring);
+    leds[k]=led;
+  }
+
+  sensorLight=new THREE.Mesh(new THREE.SphereGeometry(.0038,10,8),
+    new THREE.MeshStandardMaterial({color:0xff3b30,emissive:0xff3b30,emissiveIntensity:0,roughness:.3}));
+  sensorLight.position.set(SLOT.w/2+.016, h-topT+.003, 0); headGroup.add(sensorLight);
+
+  // motor + drive gear
+  const motor=new THREE.Mesh(new THREE.CylinderGeometry(.026,.026,.052,20), MAT.steelD);
+  motor.rotation.z=Math.PI/2; motor.position.set(-(w/2-.046), .052, -.062); headGroup.add(motor);
+  const gear=new THREE.Mesh(new THREE.CylinderGeometry(.020,.020,.008,16), MAT.steel);
+  gear.rotation.z=Math.PI/2; gear.position.set(-(w/2-.028), .050, -.026); headGroup.add(gear);
+
+  buildCutters('cross');
+})();
+
+function buildCutters(modeKey){
+  for(const g of [cutterA,cutterB]) if(g){ headGroup.remove(g); g.traverse(o=>o.geometry&&o.geometry.dispose()); }
+  const m=MODES[modeKey];
+  const span  = SLOT.w+0.004;
+  const pitch = clamp(m.stripW, 0.0028, 0.0060);
+  const discT = pitch*0.78;
+  const n     = Math.min(Math.floor(span/pitch), 92);
+  const discG =new THREE.CylinderGeometry(.0205,.0205,discT, modeKey==='strip'?24:13);
+  const spaceG=new THREE.CylinderGeometry(.0112,.0112,pitch-discT,12);
+  const shaftG=new THREE.CylinderGeometry(.0092,.0092,span+.055,14);
+  const bearG =new THREE.CylinderGeometry(.014,.014,.010,14);
+  const mk=(zoff,dir)=>{
+    const g=new THREE.Group(); g.position.set(0, BLADE_Y-HEAD.y0, zoff);
+    const sh=new THREE.Mesh(shaftG, MAT.steelD); sh.rotation.z=Math.PI/2; g.add(sh);
+    for(let i=0;i<n;i++){
+      const x=-span/2 + pitch*(i+.5) + (dir>0?0:pitch*.5);
+      if(Math.abs(x)>span/2-pitch*.4) continue;
+      const dsc=new THREE.Mesh(discG,MAT.steel); dsc.rotation.z=Math.PI/2; dsc.position.x=x; dsc.castShadow=true; g.add(dsc);
+      const sp=new THREE.Mesh(spaceG,MAT.steelD); sp.rotation.z=Math.PI/2; sp.position.x=x+pitch/2; g.add(sp);
+    }
+    for(const s of [-1,1]){
+      const b=new THREE.Mesh(bearG,MAT.trim); b.rotation.z=Math.PI/2; b.position.x=s*(span/2+.020); g.add(b);
+    }
+    headGroup.add(g); return g;
+  };
+  cutterA=mk( .0128, 1);
+  cutterB=mk(-.0128,-1);
+}
+
+(function contactShadow(){
+  const c=document.createElement('canvas'); c.width=c.height=128; const x=c.getContext('2d');
+  const g=x.createRadialGradient(64,64,4,64,64,62);
+  g.addColorStop(0,'rgba(0,0,0,.6)'); g.addColorStop(1,'rgba(0,0,0,0)');
+  x.fillStyle=g; x.fillRect(0,0,128,128);
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(BIN.w*1.9,BIN.d*2.2),
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c),transparent:true,depthWrite:false}));
+  m.rotation.x=-Math.PI/2; m.position.y=.0015; scene.add(m);
+})();
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6 · DEBRIS — instanced rigid chips + pile heightfield
+   ═══════════════════════════════════════════════════════════════════════════ */
+const debrisGeo = new THREE.BoxGeometry(1,1,1);
+// r160's color_fragment chunk only applies vColor under USE_COLOR, so instanceColor
+// needs a white per-vertex color attribute alongside it to actually tint.
+debrisGeo.setAttribute('color', new THREE.BufferAttribute(
+  new Float32Array(debrisGeo.attributes.position.count*3).fill(1), 3));
+
+const debrisMat = new THREE.MeshStandardMaterial({ roughness:.72, metalness:.04, side:THREE.DoubleSide, envMapIntensity:.8, vertexColors:true });
+const ribbonMat = new THREE.MeshStandardMaterial({ roughness:.68, metalness:.04, side:THREE.DoubleSide, vertexColors:true });
+
+const debris = new THREE.InstancedMesh(debrisGeo, debrisMat, MAX_DEBRIS);
+debris.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+debris.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_DEBRIS*3).fill(1),3);
+debris.instanceColor.setUsage(THREE.DynamicDrawUsage);
+debris.frustumCulled=false; debris.castShadow=true; debris.receiveShadow=true; debris.count=0;
+scene.add(debris);
+
+const ribbons = new THREE.InstancedMesh(debrisGeo, ribbonMat, MAX_RIBBON);
+ribbons.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+ribbons.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_RIBBON*3).fill(1),3);
+ribbons.frustumCulled=false; ribbons.castShadow=true; ribbons.count=0;
+scene.add(ribbons);
+
+/* An all-zero instance matrix yields gl_Position.w === 0, which explodes the
+   triangle across the whole screen. Seed every slot with a valid zero-scale
+   matrix so a slot is never drawn before its first real write. */
+(function seedInstances(){
+  const zero=new THREE.Matrix4().set(0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1);
+  for(let i=0;i<MAX_DEBRIS;i++) debris.setMatrixAt(i,zero);
+  for(let i=0;i<MAX_RIBBON;i++) ribbons.setMatrixAt(i,zero);
+  debris.instanceMatrix.needsUpdate=true; ribbons.instanceMatrix.needsUpdate=true;
+})();
+
+const D = {
+  n:0, ptr:0, active:0,
+  px:new Float32Array(MAX_DEBRIS), py:new Float32Array(MAX_DEBRIS), pz:new Float32Array(MAX_DEBRIS),
+  vx:new Float32Array(MAX_DEBRIS), vy:new Float32Array(MAX_DEBRIS), vz:new Float32Array(MAX_DEBRIS),
+  rx:new Float32Array(MAX_DEBRIS), ry:new Float32Array(MAX_DEBRIS), rz:new Float32Array(MAX_DEBRIS),
+  wx:new Float32Array(MAX_DEBRIS), wy:new Float32Array(MAX_DEBRIS), wz:new Float32Array(MAX_DEBRIS),
+  sw:new Float32Array(MAX_DEBRIS), sl:new Float32Array(MAX_DEBRIS), st:new Float32Array(MAX_DEBRIS),
+  ph:new Float32Array(MAX_DEBRIS), state:new Uint8Array(MAX_DEBRIS)   // 0 free · 1 falling · 2 resting
+};
+
+const GX=16, GZ=13;
+const pile   = new Float32Array(GX*GZ);
+const cellW  = BIN_IN.w/GX, cellD = BIN_IN.d/GZ;
+const REPOSE = 0.0075;                       // height difference that makes a chip slide
+
+const _m4=new THREE.Matrix4(), _q=new THREE.Quaternion(), _e=new THREE.Euler();
+const _v=new THREE.Vector3(), _s=new THREE.Vector3(), _v2=new THREE.Vector3();
+const _col=new THREE.Color();
+
+function spawnDebris(x,y,z, w,l,t, vx,vy,vz, col){
+  const i=D.ptr; D.ptr=(D.ptr+1)%MAX_DEBRIS;
+  if(D.n<MAX_DEBRIS) D.n++;
+  D.px[i]=x; D.py[i]=y; D.pz[i]=z;
+  D.vx[i]=vx; D.vy[i]=vy; D.vz[i]=vz;
+  D.rx[i]=rand(-.5,.5); D.ry[i]=rand(-3.1,3.1); D.rz[i]=rand(-.4,.4);
+  D.wx[i]=rand(-9,9); D.wy[i]=rand(-6,6); D.wz[i]=rand(-11,11);
+  D.sw[i]=w; D.sl[i]=l; D.st[i]=t; D.ph[i]=rand(0,6.28); D.state[i]=1;
+  _col.setHex(col).multiplyScalar(rand(.84,1.08));
+  debris.instanceColor.setXYZ(i,_col.r,_col.g,_col.b);
+  debris.count=D.n;
+}
+
+const GRAV=-9.81;
+function packedHeight(){ return S.fill*BIN_INNER_H*0.90; }
+
+function stepDebris(dt,time){
+  const halfW=BIN_IN.w/2, halfD=BIN_IN.d/2, packed=packedHeight();
+  let active=0;
+  for(let i=0;i<D.n;i++){
+    if(D.state[i]!==1) continue;
+    active++;
+    const area=D.sw[i]*D.sl[i];
+    const dragK=clamp(area*1400,1.4,9.0);      // large flat chips glide
+    const flut =clamp(area*900,.12,1.5);
+    D.vy[i]+=GRAV*dt;
+    D.vx[i]+=Math.sin(time*7.3+D.ph[i])*flut*dt;
+    D.vz[i]+=Math.cos(time*6.1+D.ph[i]*1.7)*flut*dt;
+    const sp=Math.hypot(D.vx[i],D.vy[i],D.vz[i]);
+    const dk=Math.min(dragK*sp*dt,.9);
+    D.vx[i]-=D.vx[i]*dk; D.vy[i]-=D.vy[i]*dk; D.vz[i]-=D.vz[i]*dk;
+    D.px[i]+=D.vx[i]*dt; D.py[i]+=D.vy[i]*dt; D.pz[i]+=D.vz[i]*dt;
+    D.rx[i]+=D.wx[i]*dt; D.ry[i]+=D.wy[i]*dt; D.rz[i]+=D.wz[i]*dt;
+    D.wx[i]*=(1-1.1*dt); D.wy[i]*=(1-.8*dt); D.wz[i]*=(1-1.1*dt);
+
+    // the whole fall happens inside the tub footprint, so always clamp to the walls
+    const pad=Math.max(D.sw[i],D.sl[i])*0.22;
+    if(D.px[i]> halfW-pad){ D.px[i]= halfW-pad; D.vx[i]=-Math.abs(D.vx[i])*.28; }
+    if(D.px[i]<-halfW+pad){ D.px[i]=-halfW+pad; D.vx[i]= Math.abs(D.vx[i])*.28; }
+    if(D.pz[i]> halfD-pad){ D.pz[i]= halfD-pad; D.vz[i]=-Math.abs(D.vz[i])*.28; }
+    if(D.pz[i]<-halfD+pad){ D.pz[i]=-halfD+pad; D.vz[i]= Math.abs(D.vz[i])*.28; }
+
+    let gx=clamp(Math.floor((D.px[i]+halfW)/cellW),0,GX-1);
+    let gz=clamp(Math.floor((D.pz[i]+halfD)/cellD),0,GZ-1);
+    let c=gz*GX+gx;
+    if(D.py[i] <= BIN_IN.floor+Math.max(pile[c],packed)+D.st[i]*1.6){
+      // angle of repose: a spike sheds onto its lowest neighbour instead of towering
+      for(let pass=0; pass<3; pass++){
+        let bx=gx, bz=gz, bh=pile[c];
+        if(gx>0    && pile[c-1] <bh-REPOSE){ bx=gx-1; bz=gz;   bh=pile[c-1]; }
+        if(gx<GX-1 && pile[c+1] <bh-REPOSE){ bx=gx+1; bz=gz;   bh=pile[c+1]; }
+        if(gz>0    && pile[c-GX]<bh-REPOSE){ bx=gx;   bz=gz-1; bh=pile[c-GX]; }
+        if(gz<GZ-1 && pile[c+GX]<bh-REPOSE){ bx=gx;   bz=gz+1; bh=pile[c+GX]; }
+        if(bx===gx && bz===gz) break;
+        gx=bx; gz=bz; c=gz*GX+gx;
+        D.px[i]=-halfW+(gx+.5)*cellW+rand(-cellW*.38,cellW*.38);
+        D.pz[i]=-halfD+(gz+.5)*cellD+rand(-cellD*.38,cellD*.38);
+      }
+      const base=Math.max(pile[c],packed);
+      D.py[i]=Math.min(BIN_IN.floor+base+D.st[i]*1.6, BIN_IN.top-D.st[i]*2);
+      D.state[i]=2;
+      // a chip's length runs along its local Y, so lay it down (x≈90°) with a random
+      // heading — otherwise the pile stands on end and reads as grass
+      D.rx[i]=Math.PI/2+rand(-.30,.30); D.ry[i]=rand(0,6.28); D.rz[i]=rand(-.26,.26);
+      // local bumpiness only — S.fill drives the bulk level via packedHeight()
+      const bump=clamp(Math.sqrt(area)*0.03 + D.st[i]*2, 0.00012, 0.0009);
+      pile[c]=Math.min(base+bump, BIN_INNER_H);
+    }
+    _e.set(D.rx[i],D.ry[i],D.rz[i],'YXZ'); _q.setFromEuler(_e);
+    _v.set(D.px[i],D.py[i],D.pz[i]); _s.set(D.sw[i],D.sl[i],D.st[i]);
+    debris.setMatrixAt(i,_m4.compose(_v,_q,_s));
+  }
+  D.active=active;
+  debris.instanceMatrix.needsUpdate=true;
+  debris.instanceColor.needsUpdate=true;
+}
+function clearDebris(){ D.n=0; D.ptr=0; D.active=0; debris.count=0; D.state.fill(0); pile.fill(0); }
+
+/* ---- ribbons still attached to the cutters ---- */
+const R = { n:0, w:0, t:.0002, col:0xffffff,
+            x:new Float32Array(MAX_RIBBON), len:new Float32Array(MAX_RIBBON), ph:new Float32Array(MAX_RIBBON) };
+
+function setupRibbons(itemW, mode, colorHex, thickness){
+  const n=clamp(Math.round(itemW/mode.stripW),4,MAX_RIBBON);
+  R.n=n; R.w=itemW/n; R.t=Math.max(thickness,.00016); R.col=colorHex;
+  for(let i=0;i<n;i++){
+    R.x[i]=-itemW/2 + R.w*(i+.5);
+    R.len[i]= mode.key==='strip' ? 0 : Math.random()*mode.chipLen*0.9;
+    R.ph[i]=rand(0,6.28);
+  }
+  _col.setHex(colorHex);
+  for(let i=0;i<n;i++) ribbons.instanceColor.setXYZ(i,_col.r,_col.g,_col.b);
+  ribbons.instanceColor.needsUpdate=true;
+  ribbons.count=n;
+  writeRibbons(0);                 // never expose an unwritten slot to the renderer
+}
+function clearRibbons(){ R.n=0; ribbons.count=0; }
+
+function stepRibbons(grow, mode, time){
+  if(!R.n) return;
+  for(let i=0;i<R.n;i++){
+    R.len[i]+=grow;
+    if(R.len[i]>=mode.chipLen){ releaseRibbon(i,mode,R.len[i]); R.len[i]=0; }
+  }
+  writeRibbons(time);
+}
+function writeRibbons(time){
+  for(let i=0;i<R.n;i++){
+    const L=Math.max(R.len[i],.0006);
+    _e.set(0,0,Math.sin(time*4.2+R.ph[i])*.035*Math.min(L/.08,1),'XYZ'); _q.setFromEuler(_e);
+    _v.set(R.x[i], BLADE_Y-.004-L/2, Math.sin(time*3.1+R.ph[i])*.0016);
+    _s.set(R.w*.9, L, R.t*2.2);
+    ribbons.setMatrixAt(i,_m4.compose(_v,_q,_s));
+  }
+  ribbons.instanceMatrix.needsUpdate=true;
+}
+function releaseRibbon(i,mode,len){
+  if(Math.random()>mode.frac) return;                    // visual decimation for micro cuts
+  spawnDebris(R.x[i]+rand(-.003,.003), BLADE_Y-.006-len/2, rand(-.014,.014),
+              R.w*.9, len, R.t*2.2, rand(-.14,.14), rand(-.34,-.06), rand(-.20,.20), R.col);
+  audio.crackle();
+}
+function flushRibbons(mode){
+  for(let i=0;i<R.n;i++) if(R.len[i]>.004) releaseRibbon(i,mode,R.len[i]);
+  clearRibbons();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   7 · FEEDABLE ITEMS
+   ═══════════════════════════════════════════════════════════════════════════ */
+const TRAY = new THREE.Vector3(-0.345, 0.006, 0.115);
+const clipPlane = new THREE.Plane(new THREE.Vector3(0,1,0), -BLADE_Y);
+const loose=[];
+let held=null, feeding=null, seedN=1;
+
+function itemGeometry(def, len){
+  if(def.kind==='disc') return new THREE.RingGeometry(0.0078, def.w/2, 64, 1);
+  const g=new THREE.PlaneGeometry(def.w, len, 10, 14);
+  if(len<def.h){                                   // keep the top of the artwork, drop the eaten part
+    const uv=g.attributes.uv, f=len/def.h;
+    for(let i=0;i<uv.count;i++) uv.setY(i, 1-(1-uv.getY(i))*f);
+    uv.needsUpdate=true;
+  }
+  return g;
+}
+
+function makeItem(kind){
+  const def=ITEMS[kind];
+  const g=new THREE.Group();
+  let mesh, colorHex=0xf3efe6;
+
+  if(def.kind==='disc'){
+    mesh=new THREE.Mesh(itemGeometry(def,def.h), new THREE.MeshPhysicalMaterial({
+      color:0xd9dde3, roughness:.08, metalness:1, side:THREE.DoubleSide, envMapIntensity:2,
+      iridescence:1, iridescenceIOR:1.9, iridescenceThicknessRange:[120,760],
+      clearcoat:1, clearcoatRoughness:.03 }));
+    colorHex=0xcfd6de;
+  } else if(def.kind==='card'){
+    mesh=new THREE.Mesh(itemGeometry(def,def.h), new THREE.MeshPhysicalMaterial({
+      map:cardTexture(), roughness:.16, metalness:.25, side:THREE.DoubleSide,
+      clearcoat:1, clearcoatRoughness:.06, envMapIntensity:1.2 }));
+    colorHex=0x2c5f93;
+  } else if(def.kind==='board'){
+    mesh=new THREE.Mesh(itemGeometry(def,def.h), new THREE.MeshStandardMaterial({
+      map:boardTexture(), roughness:.92, side:THREE.DoubleSide }));
+    colorHex=0xa8763f;
+  } else {
+    mesh=new THREE.Mesh(itemGeometry(def,def.h), new THREE.MeshStandardMaterial({
+      map:docTexture(seedN++*977), roughness:.86, side:THREE.DoubleSide, envMapIntensity:.7 }));
+  }
+  mesh.castShadow=true; mesh.receiveShadow=true; g.add(mesh);
+
+  const extra=[];
+  if(kind==='bundle'){
+    for(let k=1;k<=2;k++){
+      const s=new THREE.Mesh(mesh.geometry, mesh.material.clone());
+      s.material.color=new THREE.Color(0xd9d4c8).multiplyScalar(1-0.06*k);
+      s.position.set(rand(-.004,.004), rand(-.004,.004), -0.0007*k);
+      s.castShadow=true; g.add(s); extra.push(s);
+    }
+    const st=new THREE.Mesh(new THREE.BoxGeometry(.012,.0016,.0024), MAT.trim.clone());
+    st.position.set(-def.w/2+.020, def.h/2-.016, .0018); g.add(st); extra.push(st);
+  }
+
+  g.userData={ kind, def, mesh, extra, colorHex,
+    state:'idle', topY:0, consumed:0, len:def.h, jamAt:-1, t:0, dragTarget:null,
+    home:new THREE.Vector3(), homeQ:new THREE.Quaternion() };
+  g.userData.pick={ action:'item', item:g };
+  scene.add(g); return g;
+}
+
+function placeInTray(item, idx){
+  const u=item.userData, j=Math.random()-.5;
+  u.home.set(TRAY.x+j*0.022, TRAY.y+0.0018*idx, TRAY.z+j*0.022);
+  u.homeQ.setFromEuler(new THREE.Euler(-Math.PI/2, 0, rand(-.16,.16)));
+  item.position.copy(u.home); item.quaternion.copy(u.homeQ);
+  u.state='idle'; u.dragTarget=null;
+}
+function spawnLoose(kind){
+  while(loose.length>=6){
+    const old=loose.find(o=>o!==held);
+    if(!old) break;
+    disposeItem(old);
+  }
+  const it=makeItem(kind);
+  placeInTray(it, loose.length);
+  loose.push(it);
+  return it;
+}
+function disposeItem(it){
+  scene.remove(it);
+  const shared=new Set([texCache.card,texCache.board]);
+  it.traverse(o=>{
+    if(o.geometry) o.geometry.dispose();
+    if(o.material){ if(o.material.map && !shared.has(o.material.map)) o.material.map.dispose(); o.material.dispose(); }
+  });
+  const i=loose.indexOf(it); if(i>=0) loose.splice(i,1);
+}
+function setClip(item, planes){
+  item.traverse(o=>{ if(o.material){ o.material.clippingPlanes=planes; o.material.needsUpdate=true; } });
+}
+/* rebuild an ejected item at its surviving length so the eaten part is really gone */
+function trimItem(item, newLen){
+  const u=item.userData;
+  if(u.def.kind==='disc' || u.def.kind==='card' || newLen < u.def.h*0.35) return false;
+  const geo=itemGeometry(u.def,newLen);
+  for(const m of [u.mesh,...u.extra]){
+    if(!(m.geometry instanceof THREE.PlaneGeometry) && m!==u.mesh) continue;
+    if(m.geometry===u.mesh.geometry || m===u.mesh){ /* shared plane */ }
+  }
+  const old=u.mesh.geometry;
+  u.mesh.geometry=geo;
+  for(const m of u.extra) if(m.geometry===old) m.geometry=geo;
+  old.dispose();
+  u.len=newLen; u.consumed=0;
+  return true;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   8 · MACHINE STATE
+   ═══════════════════════════════════════════════════════════════════════════ */
+const S = {
+  power:'off', mode:MODES.cross, speed:1.0,
+  rpm:0, targetRpm:0, load:0, temp:0.06, fill:0, sheets:0,
+  jam:false, thermal:false,
+  binOut:0, binPhase:'in',
+  xray:false, quality:'high', sound:true, camPreset:0, t:0
+};
+const feedBase=0.062;
+const feedSpeed=()=>feedBase*S.speed*(1-S.load*0.42);
+const maxRpm  =()=>1450*S.speed*S.mode.rpmK;
+
+function setPower(p){
+  if(S.binPhase!=='in' && p!=='off'){ toast('CLOSE THE BIN FIRST'); return; }
+  if(S.thermal && p!=='off'){ toast('THERMAL CUT-OUT ACTIVE'); return; }
+  S.power=p; audio.click();
+  if(feeding){
+    const u=feeding.userData;
+    if(p==='rev' && (u.state==='feed'||u.state==='jam')) u.state='reverse';
+    else if(p!=='rev' && u.state==='reverse')            u.state = S.jam?'jam':'feed';
+  }
+  syncUI();
+}
+function setMode(k){
+  if(S.mode.key===k) return;
+  S.mode=MODES[k]; buildCutters(k); audio.click();
+  if(feeding && feeding.userData.state==='feed'){
+    const u=feeding.userData;
+    setupRibbons(u.def.w, S.mode, u.colorHex, u.def.t);
+  }
+  syncUI();
+}
+
+function tryFeed(item){
+  if(S.binPhase!=='in'){ toast('BIN IS OPEN'); return false; }
+  if(S.fill>=1){ alertBox('BIN FULL','Empty the waste bin before shredding more.'); return false; }
+  if(S.thermal){ alertBox('THERMAL CUT-OUT','Motor overheated. Let it cool below 45 °C.'); return false; }
+  if(feeding){ toast('CUTTERS BUSY'); return false; }
+  if(S.power!=='auto'){ toast('SET POWER TO AUTO'); flashFault(); return false; }
+  const u=item.userData;
+  feeding=item; u.state='align'; u.t=0; u.consumed=0;
+  setClip(item,[clipPlane]);
+  const i=loose.indexOf(item); if(i>=0) loose.splice(i,1);
+  return true;
+}
+
+function jamNow(){
+  S.jam=true; S.targetRpm=0;
+  if(feeding) feeding.userData.state='jam';
+  flushRibbons(S.mode);
+  audio.jam();
+  alertBox('PAPER JAM','Cutters stalled. Switch power to <b>REV</b> to back the material out.');
+  syncUI();
+}
+function emptyBin(){
+  if(S.binPhase!=='in') return;
+  if(feeding){ toast('WAIT FOR THE CURRENT SHEET'); return; }
+  S.binPhase='out'; S.power='off'; hideAlert(); audio.click(); syncUI();
+}
+function resetAll(){
+  if(feeding){ setClip(feeding,null); disposeItem(feeding); feeding=null; clearRibbons(); }
+  for(const it of [...loose]) disposeItem(it);
+  held=null; clearDebris();
+  Object.assign(S,{fill:0,sheets:0,temp:.06,jam:false,thermal:false,load:0,power:'off',binPhase:'in',binOut:0});
+  binGroup.position.z=0;
+  spawnLoose('paper'); spawnLoose('paper'); spawnLoose('paper');
+  hideAlert(); syncUI(); audio.click();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   9 · AUDIO — fully synthesised, no assets
+   ═══════════════════════════════════════════════════════════════════════════ */
+const audio=(()=>{
+  let ctx,master,motorG,oscA,oscB,whine,whineG,shredG,shredF,noiseBuf,ready=false,on=true;
+  function init(){
+    if(ready) return;
+    const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
+    ctx=new AC(); ready=true;
+    if(ctx.state==='suspended') ctx.resume();
+    master=ctx.createGain(); master.gain.value=on?0.9:0; master.connect(ctx.destination);
+    const len=ctx.sampleRate*2; noiseBuf=ctx.createBuffer(1,len,ctx.sampleRate);
+    const d=noiseBuf.getChannelData(0); for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+
+    motorG=ctx.createGain(); motorG.gain.value=0;
+    const lp=ctx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=520; lp.Q.value=1.1;
+    motorG.connect(lp); lp.connect(master);
+    oscA=ctx.createOscillator(); oscA.type='sawtooth'; oscA.frequency.value=52; oscA.connect(motorG); oscA.start();
+    oscB=ctx.createOscillator(); oscB.type='square'; oscB.frequency.value=104;
+    const gB=ctx.createGain(); gB.gain.value=.32; oscB.connect(gB); gB.connect(motorG); oscB.start();
+
+    whine=ctx.createOscillator(); whine.type='sine'; whine.frequency.value=1180;
+    whineG=ctx.createGain(); whineG.gain.value=0; whine.connect(whineG); whineG.connect(master); whine.start();
+
+    const src=ctx.createBufferSource(); src.buffer=noiseBuf; src.loop=true;
+    shredF=ctx.createBiquadFilter(); shredF.type='bandpass'; shredF.frequency.value=2100; shredF.Q.value=1.4;
+    shredG=ctx.createGain(); shredG.gain.value=0;
+    src.connect(shredF); shredF.connect(shredG); shredG.connect(master); src.start();
+  }
+  const now=()=>ctx?ctx.currentTime:0;
+  function burst(freq,q,dur,vol,type='bandpass'){
+    if(!ready||!on) return;
+    const s=ctx.createBufferSource(); s.buffer=noiseBuf; s.playbackRate.value=rand(.8,1.25);
+    const f=ctx.createBiquadFilter(); f.type=type; f.frequency.value=freq; f.Q.value=q;
+    const g=ctx.createGain(); g.gain.setValueAtTime(vol,now());
+    g.gain.exponentialRampToValueAtTime(.0001, now()+dur);
+    s.connect(f); f.connect(g); g.connect(master); s.start(); s.stop(now()+dur+.02);
+  }
+  return {
+    init,
+    setMuted(v){ on=!v; if(master) master.gain.value=on?0.9:0; },
+    frame(rpm,load,hard){
+      if(!ready||!on) return;
+      const r=Math.abs(rpm)/1450, t=now();
+      motorG.gain.setTargetAtTime(r>.01?.055+.05*load:0, t,.08);
+      oscA.frequency.setTargetAtTime(38+62*r,t,.09);
+      oscB.frequency.setTargetAtTime(76+130*r,t,.09);
+      whineG.gain.setTargetAtTime(r>.05?.012*r:0,t,.12);
+      whine.frequency.setTargetAtTime(900+900*r,t,.12);
+      shredG.gain.setTargetAtTime(load>.02?.05+.13*load:0,t,.06);
+      shredF.frequency.setTargetAtTime(hard?3400+2000*load:1500+2200*load,t,.08);
+      shredF.Q.setTargetAtTime(hard?3.2:1.4,t,.1);
+    },
+    crackle(){ if(Math.random()<.12) burst(rand(1800,5200),rand(1.4,4),rand(.02,.06),rand(.05,.13)); },
+    click(){ init(); burst(2600,7,.035,.22); },
+    jam(){ if(!ready||!on) return; const t=now();
+      oscA.frequency.cancelScheduledValues(t);
+      oscA.frequency.setValueAtTime(Math.max(oscA.frequency.value,30),t);
+      oscA.frequency.exponentialRampToValueAtTime(24,t+.55);
+      burst(180,1.2,.5,.35,'lowpass'); burst(90,.8,.7,.30,'lowpass'); },
+    thud(){ burst(120,1,.35,.30,'lowpass'); },
+    slide(){ burst(700,.8,.45,.14,'lowpass'); }
+  };
+})();
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   10 · CAMERA
+   ═══════════════════════════════════════════════════════════════════════════ */
+const CAM={ target:new THREE.Vector3(0,.30,0), tTarget:new THREE.Vector3(0,.30,0),
+  theta:.72, phi:1.12, dist:1.32, tTheta:.72, tPhi:1.12, tDist:1.32, drag:false, px:0, py:0 };
+const PRESETS=[
+  {n:'OVERVIEW',th:.72,  ph:1.12,d:1.32,t:[0,.30,0]},
+  {n:'CUTTERS', th:.50,  ph:1.03,d:.34, t:[0,BLADE_Y+.004,0]},
+  {n:'BIN',     th:1.05, ph:1.44,d:.58, t:[0,.20,0]},
+  {n:'FRONT',   th:1.5707,ph:1.30,d:1.02,t:[0,.30,0]},
+  {n:'TOP',     th:.90,  ph:.40, d:.86, t:[0,.44,0]}
+];
+function applyPreset(i){
+  const p=PRESETS[i%PRESETS.length];
+  CAM.tTheta=p.th; CAM.tPhi=p.ph; CAM.tDist=p.d; CAM.tTarget.set(...p.t);
+  $('#bCam').textContent='CAM · '+PRESETS[(i+1)%PRESETS.length].n;
+}
+/* On a portrait viewport the horizontal FOV collapses, so the machine overflows the
+   frame at the preset distances. Pull back, and aim a little low so the machine sits
+   above the stacked mobile panels. */
+let camFit=1, camYOff=0;
+function updateFit(){
+  const a=innerWidth/innerHeight;
+  camFit  = a<1.05 ? clamp(1.05/a, 1, 1.5) : 1;
+  camYOff = a<1.05 ? -0.075*(camFit-1)/0.5 : 0;
+}
+function updateCam(dt){
+  CAM.theta=damp(CAM.theta,CAM.tTheta,9,dt);
+  CAM.phi  =damp(CAM.phi,CAM.tPhi,9,dt);
+  CAM.dist =damp(CAM.dist,CAM.tDist,8,dt);
+  CAM.target.lerp(CAM.tTarget,1-Math.exp(-8*dt));
+  const sp=Math.sin(CAM.phi), d=CAM.dist*camFit;
+  const ty=CAM.target.y+camYOff;
+  camera.position.set(
+    CAM.target.x+d*sp*Math.sin(CAM.theta),
+    ty+d*Math.cos(CAM.phi),
+    CAM.target.z+d*sp*Math.cos(CAM.theta));
+  camera.lookAt(CAM.target.x, ty, CAM.target.z);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   11 · POINTER INPUT
+   ═══════════════════════════════════════════════════════════════════════════ */
+const ray=new THREE.Raycaster(), ptr=new THREE.Vector2();
+const dragPlane=new THREE.Plane(), dragHit=new THREE.Vector3(), dragOff=new THREE.Vector3();
+const _tiltQ=new THREE.Quaternion(), _tiltE=new THREE.Euler();
+
+const SLOT_PT=new THREE.Vector3(0,SLOT.y+0.02,0);
+const SNAP_R=0.15;                                   // world radius of the slot magnet
+const dropRing=new THREE.Mesh(new THREE.RingGeometry(.086,.108,48),
+  new THREE.MeshBasicMaterial({color:0x63d9ff,transparent:true,opacity:0,side:THREE.DoubleSide,depthWrite:false}));
+dropRing.rotation.x=-Math.PI/2; dropRing.position.set(0,SLOT.y+.005,0); scene.add(dropRing);
+
+function setPtr(e){
+  const r=canvas.getBoundingClientRect();
+  const w=r.width||innerWidth, h=r.height||innerHeight;   // guard a collapsed layout
+  ptr.x=((e.clientX-r.left)/w)*2-1;
+  ptr.y=-((e.clientY-r.top)/h)*2+1;
+}
+function pickAt(){
+  ray.setFromCamera(ptr,camera);
+  for(const h of ray.intersectObjects(scene.children,true)){
+    let o=h.object;
+    while(o){ if(o.userData&&o.userData.pick) return o.userData.pick; o=o.parent; }
+  }
+  return null;
+}
+canvas.addEventListener('pointerdown',e=>{
+  canvas.setPointerCapture(e.pointerId); audio.init(); setPtr(e);
+  const p=pickAt();
+  if(p){
+    if(p.action==='item' && p.item.userData.state==='idle'){
+      held=p.item; held.userData.state='held';
+      dragPlane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(_v2).negate(), held.position);
+      ray.ray.intersectPlane(dragPlane,dragHit); dragOff.copy(held.position).sub(dragHit);
+      canvas.classList.add('dragging'); return;
+    }
+    if(p.action==='power'){ setPower(S.power==='off'?'auto':S.power==='auto'?'rev':'off'); return; }
+    if(p.action==='empty'){ emptyBin(); return; }
+  }
+  CAM.drag=true; CAM.px=e.clientX; CAM.py=e.clientY; canvas.classList.add('dragging');
+});
+canvas.addEventListener('pointermove',e=>{
+  setPtr(e);
+  if(held){
+    ray.setFromCamera(ptr,camera);
+    const u=held.userData;
+    if(ray.ray.intersectPlane(dragPlane,dragHit)){
+      const p=(u.dragTarget||new THREE.Vector3()).copy(dragHit).add(dragOff);
+      p.y=Math.max(p.y,0.02);
+      // The drag plane runs through the pickup point, so the slot is not actually on
+      // it. Magnet the item to the slot mouth once the cursor's ray passes near it,
+      // otherwise the sheet can never be dropped in.
+      ray.ray.closestPointToPoint(SLOT_PT,_v2);
+      const d=_v2.distanceTo(SLOT_PT);
+      u.overSlot = d < SNAP_R;
+      if(u.overSlot){
+        const k=clamp(1-d/SNAP_R,0,1);
+        _v.set(0, SLOT.y+u.len/2+0.035, 0);
+        p.lerp(_v, k*0.92);
+      }
+      u.dragTarget=p;
+    }
+    return;
+  }
+  if(CAM.drag){
+    const dx=e.clientX-CAM.px, dy=e.clientY-CAM.py; CAM.px=e.clientX; CAM.py=e.clientY;
+    CAM.tTheta-=dx*.0062; CAM.tPhi=clamp(CAM.tPhi-dy*.0055,.16,1.52);
+    return;
+  }
+  canvas.classList.toggle('hovering', !!pickAt());
+});
+function endDrag(){
+  if(held){
+    const u=held.userData;
+    // judge the drop by where the cursor was released, not by the lerped mesh,
+    // which lags behind on a fast flick
+    const p=u.dragTarget||held.position;
+    const near=u.overSlot || (Math.hypot(p.x,p.z)<0.16 && p.y>SLOT.y-0.10);
+    if(!(near && tryFeed(held))){ u.state='idle'; u.dragTarget=null; }
+    u.overSlot=false; held=null;
+  }
+  CAM.drag=false; canvas.classList.remove('dragging');
+}
+canvas.addEventListener('pointerup',endDrag);
+canvas.addEventListener('pointercancel',endDrag);
+canvas.addEventListener('wheel',e=>{
+  e.preventDefault();
+  CAM.tDist=clamp(CAM.tDist*(1+Math.sign(e.deltaY)*.09),.24,3.0);
+},{passive:false});
+let pinch0=0;
+canvas.addEventListener('touchstart',e=>{ if(e.touches.length===2)
+  pinch0=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); },{passive:true});
+canvas.addEventListener('touchmove',e=>{ if(e.touches.length===2){
+  const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+  if(pinch0>0) CAM.tDist=clamp(CAM.tDist*(pinch0/d),.24,3.0); pinch0=d; }},{passive:true});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   12 · UI
+   ═══════════════════════════════════════════════════════════════════════════ */
+$$('[data-pw]').forEach(b=>b.onclick=()=>setPower(b.dataset.pw));
+$$('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
+$$('[data-feed]').forEach(b=>b.onclick=()=>{
+  audio.init();
+  const it=spawnLoose(b.dataset.feed);
+  if(!tryFeed(it)) toast(ITEMS[b.dataset.feed].name+' ON THE DESK — DRAG IT IN');
+});
+$('#speed').oninput=e=>{ S.speed=+e.target.value/100; $('#speedV').textContent=e.target.value+'%'; };
+$('#bXray').onclick =()=>{ S.xray=!S.xray; applyXray(); audio.click(); syncUI(); };
+$('#bCam').onclick  =()=>{ S.camPreset=(S.camPreset+1)%PRESETS.length; applyPreset(S.camPreset); audio.click(); };
+$('#bSound').onclick=()=>{ S.sound=!S.sound; audio.init(); audio.setMuted(!S.sound); syncUI(); };
+$('#bQual').onclick =()=>{ S.quality=S.quality==='high'?'lite':'high'; applyQuality(); audio.click(); syncUI(); };
+$('#bEmpty').onclick=emptyBin;
+$('#bReset').onclick=resetAll;
+
+addEventListener('keydown',e=>{
+  if(e.repeat || e.metaKey || e.ctrlKey) return;
+  const k=e.key.toLowerCase();
+  if(k===' '){ e.preventDefault(); audio.init(); tryFeed(spawnLoose('paper')); }
+  else if(k==='1') setMode('strip');
+  else if(k==='2') setMode('cross');
+  else if(k==='3') setMode('micro');
+  else if(k==='p') setPower(S.power==='off'?'auto':S.power==='auto'?'rev':'off');
+  else if(k==='r') setPower(S.power==='rev'?'auto':'rev');
+  else if(k==='x'){ S.xray=!S.xray; applyXray(); syncUI(); }
+  else if(k==='e') emptyBin();
+  else if(k==='c'){ S.camPreset=(S.camPreset+1)%PRESETS.length; applyPreset(S.camPreset); }
+});
+
+function applyXray(){
+  for(const m of headShell){
+    const mat=m.material; if(!mat) continue;
+    mat.transparent=S.xray; mat.opacity=S.xray?.16:1; mat.depthWrite=!S.xray; mat.needsUpdate=true;
+  }
+  MAT.bin.opacity = S.xray?.16:.40;
+}
+function applyQuality(){
+  const hi=S.quality==='high';
+  renderer.shadowMap.type = hi?THREE.PCFSoftShadowMap:THREE.BasicShadowMap;
+  key.shadow.mapSize.set(hi?2048:1024, hi?2048:1024);
+  if(key.shadow.map){ key.shadow.map.dispose(); key.shadow.map=null; }
+  renderer.shadowMap.needsUpdate=true;
+  renderer.setPixelRatio(Math.min(devicePixelRatio, hi?2:1.35));
+  onResize(); applyXray();
+}
+
+let toastT=0, faultFlash=0;
+function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); toastT=2.0; }
+function alertBox(t,d){ const a=$('#alert'); a.classList.remove('info');
+  a.querySelector('.t').textContent=t; a.querySelector('.d').innerHTML=d; a.classList.add('show'); }
+function infoBox(t,d){ const a=$('#alert'); a.classList.add('info');
+  a.querySelector('.t').textContent=t; a.querySelector('.d').innerHTML=d; a.classList.add('show'); }
+function hideAlert(){ $('#alert').classList.remove('show'); }
+function flashFault(){ faultFlash=0.5; }
+
+function syncUI(){
+  $$('[data-pw]').forEach(b=>b.classList.toggle('on',b.dataset.pw===S.power));
+  $$('[data-mode]').forEach(b=>b.classList.toggle('on',b.dataset.mode===S.mode.key));
+  $('#bXray').classList.toggle('on',S.xray);
+  $('#bSound').classList.toggle('on',S.sound);
+  $('#bSound').textContent=S.sound?'SOUND ON':'SOUND OFF';
+  $('#bQual').classList.toggle('on',S.quality==='high');
+  $('#bQual').textContent=S.quality==='high'?'QUALITY HI':'QUALITY LO';
+  $('#sSize').textContent=S.mode.size;
+  const sec=$('#cSec'); sec.querySelector('span').textContent=S.mode.label;
+  sec.className='chip '+(S.mode.key==='micro'?'ok':S.mode.key==='strip'?'warn':'');
+  const pw=$('#cPower');
+  pw.querySelector('span').textContent=S.thermal?'THERMAL LOCK':S.jam?'JAMMED':S.power.toUpperCase();
+  pw.className='chip '+(S.jam||S.thermal?'bad':S.power==='auto'?'ok':S.power==='rev'?'warn':'');
+  $('#bEmpty').disabled=(S.binPhase!=='in');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   13 · SIMULATION
+   ═══════════════════════════════════════════════════════════════════════════ */
+function applyClip(u){
+  feeding.position.y=u.topY-u.len/2;
+  clipPlane.constant=-(u.topY-u.len+u.consumed);
+}
+
+function stepItems(dt){
+  for(const it of loose){
+    const u=it.userData;
+    if(u.state==='held' && u.dragTarget){
+      it.position.lerp(u.dragTarget,1-Math.exp(-22*dt));
+      const near=clamp(1-Math.hypot(it.position.x,it.position.z)/0.30,0,1);
+      _tiltE.set(-Math.PI/2*(1-near),0,0); _tiltQ.setFromEuler(_tiltE);
+      it.quaternion.slerp(_tiltQ,1-Math.exp(-12*dt));
+    } else if(u.state==='idle'){
+      it.position.lerp(u.home,1-Math.exp(-9*dt));
+      it.quaternion.slerp(u.homeQ,1-Math.exp(-9*dt));
+    }
+  }
+  const ringTo = held ? (held.userData.overSlot?0.85:0.30) : 0;
+  dropRing.material.opacity=damp(dropRing.material.opacity, ringTo, 10, dt);
+  dropRing.scale.setScalar(1+Math.sin(S.t*4)*(held&&held.userData.overSlot?.06:.03));
+
+  if(!feeding) return;
+  const u=feeding.userData, def=u.def, m=S.mode;
+
+  if(u.state==='align'){
+    u.t+=dt;
+    _v.set(0, SLOT.y+u.len/2-0.006, 0);
+    feeding.position.lerp(_v,1-Math.exp(-14*dt));
+    feeding.quaternion.slerp(_tiltQ.identity(),1-Math.exp(-14*dt));
+    if(feeding.position.distanceTo(_v)<0.004 || u.t>1.4){
+      feeding.position.copy(_v); feeding.quaternion.identity();
+      u.topY=_v.y+u.len/2; u.state='feed';
+      setupRibbons(def.w,m,u.colorHex,def.t);
+      const modeK = m.key==='micro'?1.55 : m.key==='cross'?1.0 : 0.65;
+      const risk  = def.jam*modeK + (S.temp>.75?.20:0) + (S.fill>.9?.12:0) + (S.speed>1.25?.08:0);
+      u.jamAt = Math.random()<risk ? rand(.18,.72)*u.len : -1;
+      audio.thud();
+    }
+  }
+  else if(u.state==='feed'){
+    if(S.jam){ u.state='jam'; return; }
+    if(S.power!=='auto' || S.thermal){ applyClip(u); return; }     // paused, holds position
+    const v=feedSpeed();
+    u.topY-=v*dt;
+    u.consumed=Math.max(u.consumed, u.len-(u.topY-BLADE_Y));
+    if(u.consumed>0) stepRibbons(v*dt,m,S.t);
+    S.load=damp(S.load, clamp(def.load*.30*S.speed,0,1), 6, dt);
+    if(u.jamAt>0 && u.consumed>=u.jamAt){ jamNow(); return; }
+    if(u.consumed>=u.len){
+      flushRibbons(m);
+      S.sheets += (u.kind==='bundle'?5:1);
+      S.fill=clamp(S.fill + def.fill*m.fillK/BIN_SHEETS, 0, 1);
+      setClip(feeding,null); disposeItem(feeding); feeding=null; S.load=0;
+      if(S.fill>=1) alertBox('BIN FULL','Waste bin at capacity. Press <b>EMPTY BIN</b> or pull the drawer handle.');
+      syncUI(); return;
+    }
+    applyClip(u);
+  }
+  else if(u.state==='jam'){
+    applyClip(u);
+    feeding.position.x=Math.sin(S.t*46)*.0012;
+    feeding.rotation.z=Math.sin(S.t*38)*.004;
+  }
+  else if(u.state==='reverse'){
+    u.topY+=feedSpeed()*0.8*dt;
+    S.load=damp(S.load,.35,5,dt);
+    applyClip(u);
+    feeding.position.x=0; feeding.rotation.z=0;
+    if(u.topY-u.len+u.consumed > SLOT.y+0.014){
+      S.jam=false; S.load=0; u.state='eject'; u.t=0; hideAlert(); audio.thud(); syncUI();
+    }
+  }
+  else if(u.state==='eject'){
+    u.t+=dt;
+    feeding.position.y=damp(feeding.position.y, SLOT.y+u.len/2+0.06, 6, dt);
+    if(u.t>0.6){
+      const it=feeding; feeding=null; clearRibbons();
+      setClip(it,null);
+      const survived=it.userData.len-it.userData.consumed;
+      if(trimItem(it,survived)){ loose.push(it); placeInTray(it,loose.length-1); toast('MATERIAL BACKED OUT'); }
+      else { disposeItem(it); toast('MATERIAL DESTROYED — DISCARDED'); }
+    }
+  }
+}
+
+function stepMachine(dt){
+  const u = feeding && feeding.userData;
+  const cutting = S.power==='auto' && !S.jam && !S.thermal && u && (u.state==='feed'||u.state==='align');
+  const backing = S.power==='rev'  && u && u.state==='reverse';
+  const idleSpin= (S.power==='auto' && !S.jam && !S.thermal) ? 0.12 : 0;
+
+  S.targetRpm = (S.jam||S.thermal) ? 0 : (cutting||backing ? 1 : idleSpin)*maxRpm();
+  S.rpm = damp(S.rpm, S.targetRpm, S.jam?14:4.5, dt);
+  const w=(S.rpm/60)*Math.PI*2*dt*(S.power==='rev'?-1:1);
+  if(cutterA) cutterA.rotation.x+=w;
+  if(cutterB) cutterB.rotation.x-=w;
+
+  // thermals
+  if(cutting||backing) S.temp = clamp(S.temp + (0.009 + S.load*0.028)*dt, 0, 1);
+  else                 S.temp = clamp(S.temp - 0.045*dt, 0.05, 1);
+  if(S.temp>=1 && !S.thermal){
+    S.thermal=true; S.power='off'; S.targetRpm=0; flushRibbons(S.mode);
+    alertBox('THERMAL CUT-OUT','Motor over 90 °C — duty cycle exceeded. Wait for it to cool below 45 °C.');
+    audio.jam(); syncUI();
+  }
+  if(S.thermal && S.temp<0.45){ S.thermal=false; hideAlert(); toast('MOTOR READY'); syncUI(); }
+  if(!(cutting||backing)) S.load=damp(S.load,0,4,dt);
+
+  // bin drawer
+  if(S.binPhase==='out'){
+    S.binOut=damp(S.binOut,BIN.d*1.05,7,dt);
+    if(S.binOut>BIN.d*0.95){ clearDebris(); S.fill=0; S.binPhase='returning'; audio.slide(); toast('BIN EMPTIED'); }
+  } else if(S.binPhase==='returning'){
+    S.binOut=damp(S.binOut,0,7,dt);
+    if(S.binOut<0.004){ S.binOut=0; S.binPhase='in'; audio.thud(); syncUI(); }
+  }
+  binGroup.position.z=S.binOut;
+
+  // indicators
+  const blink=Math.sin(S.t*9)>0?1:0;
+  if(faultFlash>0) faultFlash-=dt;
+  setLed('ready', (S.power==='auto'&&!S.jam&&!S.thermal&&S.fill<1)?1.6:0, dt);
+  setLed('busy',  S.rpm>60 ? (cutting||backing?2.4:0.7) : 0, dt);
+  setLed('fault', S.jam?blink*3.0 : S.thermal?blink*1.8 : S.fill>=1?0.9 : faultFlash>0?2.5:0, dt);
+  sensorLight.material.emissiveIntensity=damp(sensorLight.material.emissiveIntensity,
+    (S.power==='auto'&&(held||feeding))?2.2:0.15, 10, dt);
+  if(switchKnob){
+    const a=S.power==='auto'?-0.42:S.power==='rev'?0.42:0;
+    switchKnob.rotation.x=damp(switchKnob.rotation.x,a,16,dt);
+  }
+
+  // chassis vibration
+  const amp=(S.rpm/1450)*0.00055*(1+S.load*2.2);
+  headGroup.position.x=Math.sin(S.t*112)*amp;
+  headGroup.position.y=HEAD.y0+Math.sin(S.t*97)*amp*0.6;
+  if(S.binPhase==='in') binGroup.position.x=Math.sin(S.t*112)*amp*0.4;
+
+  audio.frame(S.rpm, S.load, !!(u && u.def.hard>1));
+}
+function setLed(k,v,dt){ leds[k].material.emissiveIntensity=damp(leds[k].material.emissiveIntensity,v,14,dt); }
+
+let hudT=0;
+function stepHUD(dt){
+  hudT-=dt; if(hudT>0) return; hudT=0.1;
+  $('#sSheets').textContent=S.sheets;
+  $('#sParts').textContent =D.n;
+  $('#sRpm').textContent   =Math.round(S.rpm*(S.power==='rev'?-1:1))+' RPM';
+  const fp=Math.round(S.fill*100), tc=Math.round(22+S.temp*72), lp=Math.round(S.load*100);
+  $('#binPct').textContent=fp+'%';   $('#binBar').firstElementChild.style.width=fp+'%';
+  $('#tempPct').textContent=tc+'°C'; $('#tempBar').firstElementChild.style.width=Math.round(S.temp*100)+'%';
+  $('#loadPct').textContent=lp+'%';  $('#loadBar').firstElementChild.style.width=lp+'%';
+  const cb=$('#cBin'); cb.querySelector('span').textContent='BIN '+fp+'%';
+  cb.className='chip '+(fp>=100?'bad':fp>75?'warn':'');
+  const ct=$('#cTemp'); ct.querySelector('span').textContent='MOTOR '+tc+'°C';
+  ct.className='chip '+(S.temp>.85?'bad':S.temp>.6?'warn':'');
+  if(toastT>0){ toastT-=0.1; if(toastT<=0) $('#toast').classList.remove('show'); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   14 · LOOP
+   ═══════════════════════════════════════════════════════════════════════════ */
+function onResize(){
+  renderer.setSize(innerWidth,innerHeight,false);
+  camera.aspect=innerWidth/innerHeight;
+  camera.fov = innerWidth<760 ? 46 : 38;
+  camera.updateProjectionMatrix();
+  updateFit();
+}
+addEventListener('resize',onResize);
+
+let last=performance.now();
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min((now-last)/1000, 1/30); last=now;
+  S.t+=dt;
+  stepItems(dt);
+  stepMachine(dt);
+  stepDebris(dt,S.t);
+  updateCam(dt);
+  stepHUD(dt);
+  renderer.render(scene,camera);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   15 · BOOT
+   ═══════════════════════════════════════════════════════════════════════════ */
+onResize();
+applyQuality();
+applyPreset(0);
+spawnLoose('paper'); spawnLoose('paper'); spawnLoose('paper');
+syncUI();
+renderer.compile(scene,camera);
+requestAnimationFrame(loop);
+setTimeout(()=>{
+  $('#boot').classList.add('gone');
+  setTimeout(()=>{
+    const b=$('#boot'); if(b) b.remove();
+    infoBox('SHRED-9000 ONLINE','Set power to <b>AUTO</b>, then drag a document into the slot.<br>Watch the cutters bite — and mind the jams.');
+    setTimeout(hideAlert,5600);
+  },560);
+},480);
+</script>
+</body>
+</html>
